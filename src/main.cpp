@@ -15,6 +15,16 @@
 #define pin_CLK 3
 #define pin_OUT 5
 
+// Initialize a connection to esp-link using the normal hardware serial port both for
+// SLIP and for debug messages.
+ELClient esp(&Serial, &Serial);
+
+// Initialize CMD client (for GetTime)
+ELClientCmd cmd(&esp);
+
+// Initialize the MQTT client
+ELClientMqtt mqtt(&esp);
+
 // Creating a OneWire object
 OneWire oneWire(PIN_DS18B20);
 
@@ -58,9 +68,12 @@ void print_values() {
   Serial.print ("OUT: ");
   Serial.print (out);
   esp.Process();
-   String result = "RESULT";
-   char buf[50];
-   result.toCharArray(buf, 50);
+   String result = "{real_temperature: " + String(realTemp) + 
+                    ", reference_value:" + String(pos_encoder) + 
+                    ", error: " + String(error) + 
+                    ", out: " + String(out) + "}";
+   char buf[100];
+   result.toCharArray(buf, 100);
     mqtt.publish("pid/value", buf);
 }
 
@@ -86,15 +99,7 @@ void do_encoder() {
    last = DT;
 }
 
-// Initialize a connection to esp-link using the normal hardware serial port both for
-// SLIP and for debug messages.
-ELClient esp(&Serial, &Serial);
 
-// Initialize CMD client (for GetTime)
-ELClientCmd cmd(&esp);
-
-// Initialize the MQTT client
-ELClientMqtt mqtt(&esp);
 
 // Callback made from esp-link to notify of wifi status changes
 // Here we just print something out for grins
@@ -156,15 +161,18 @@ void setup() {
 
    Serial.println("EL-Client starting!");
 
-unsigned long delayStart = 0;
-unsigned long current = 0;
  esp.wifiCb.attach(wifiCb); // wifi status change callback, optional (delete if not desired)
   bool ok;
   do {
     ok = esp.Sync();      // sync up with esp-link, blocks for up to 2 seconds
-    current = millis();
     if (!ok) Serial.println("EL-Client sync failed!");
-    if (current - delayStart >= 5000) break;
+    if(Serial.available() > 0 ) {
+      String str = Serial.readString();
+      if(str == "break") {
+        Serial.println("Breack synced!");
+        break;
+      }
+    }
   } while(!ok);
   Serial.println("EL-Client synced!");
 
