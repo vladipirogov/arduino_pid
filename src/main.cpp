@@ -1,6 +1,11 @@
 #include <DallasTemperature.h>
 #include <pid.h>
 #include <TimerOne.h>
+#include <ELClient.h>
+#include <ELClientCmd.h>
+#include <ELClientMqtt.h>
+#include <EEPROM.h>
+#include "hashmap.h"   
 
 // Arduino pin number with sensor connected
 #define PIN_DS18B20 8
@@ -27,6 +32,9 @@ float error = 0;
 float realTemp = 0;
 float out = 0;
 
+//Connection status
+bool connected;
+
 /**
  * Auxiliary function of printing the temperature value for the device
  */
@@ -49,7 +57,11 @@ void print_values() {
 
   Serial.print ("OUT: ");
   Serial.print (out);
-
+  esp.Process();
+   String result = "RESULT";
+   char buf[50];
+   result.toCharArray(buf, 50);
+    mqtt.publish("pid/value", buf);
 }
 
 void do_encoder() {
@@ -74,6 +86,61 @@ void do_encoder() {
    last = DT;
 }
 
+// Initialize a connection to esp-link using the normal hardware serial port both for
+// SLIP and for debug messages.
+ELClient esp(&Serial, &Serial);
+
+// Initialize CMD client (for GetTime)
+ELClientCmd cmd(&esp);
+
+// Initialize the MQTT client
+ELClientMqtt mqtt(&esp);
+
+// Callback made from esp-link to notify of wifi status changes
+// Here we just print something out for grins
+void wifiCb(void* response) {
+  ELClientResponse *res = (ELClientResponse*)response;
+  if (res->argc() == 1) {
+    uint8_t status;
+    res->popArg(&status, 1);
+
+    if(status == STATION_GOT_IP) {
+      Serial.println("WIFI CONNECTED");
+    } else {
+      Serial.print("WIFI NOT READY: ");
+      Serial.println(status);
+    }
+}
+}
+
+
+
+// Callback when MQTT is connected
+void mqttConnected(void* response) {
+  Serial.println("MQTT connected!");
+  mqtt.subscribe("home/commandtopic");
+  connected = true;
+}
+
+// Callback when MQTT is disconnected
+void mqttDisconnected(void* response) {
+  //Serial.println("MQTT disconnected");
+  connected = false;
+}
+
+void mqttData(void* response) {
+  ELClientResponse *res = (ELClientResponse *)response;
+  String topic = res->popString();
+
+  String serial_str = res->popString();
+
+  Serial.println(serial_str);
+}
+
+void mqttPublished(void* response) {
+  Serial.println("MQTT published");
+}
+
 /**
  * 
  */
@@ -86,6 +153,28 @@ void setup() {
   Timer1.initialize(2000000);
   Timer1.attachInterrupt( print_values );
    attachInterrupt(digitalPinToInterrupt(pin_DT), do_encoder, CHANGE);
+
+   Serial.println("EL-Client starting!");
+
+unsigned long delayStart = 0;
+unsigned long current = 0;
+ esp.wifiCb.attach(wifiCb); // wifi status change callback, optional (delete if not desired)
+  bool ok;
+  do {
+    ok = esp.Sync();      // sync up with esp-link, blocks for up to 2 seconds
+    current = millis();
+    if (!ok) Serial.println("EL-Client sync failed!");
+    if (current - delayStart >= 5000) break;
+  } while(!ok);
+  Serial.println("EL-Client synced!");
+
+  // Set-up callbacks for events and initialize with es-link.
+  mqtt.connectedCb.attach(mqttConnected);
+  mqtt.disconnectedCb.attach(mqttDisconnected);
+  mqtt.publishedCb.attach(mqttPublished);
+  mqtt.dataCb.attach(mqttData);
+  mqtt.setup();
+    Serial.println("EL-MQTT ready");
 }
 
 /**
