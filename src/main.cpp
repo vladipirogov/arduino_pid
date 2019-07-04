@@ -57,21 +57,12 @@ float printTemperature() {
  * 
  */
 void print_values() {
-  Serial.print("Temperature: ");     
-  Serial.println(realTemp);
-  Serial.print ("  ");
-
-  Serial.print ("ERROR: ");
-  Serial.print (error);
-  Serial.print ("  ");
-
-  Serial.print ("OUT: ");
-  Serial.print (out);
   esp.Process();
    String result = "{real_temperature: " + String(realTemp) + 
                     ", reference_value:" + String(pos_encoder) + 
                     ", error: " + String(error) + 
                     ", out: " + String(out) + "}";
+   Serial.println(result);
    char buf[100];
    result.toCharArray(buf, 100);
     mqtt.publish("pid/value", buf);
@@ -123,7 +114,7 @@ void wifiCb(void* response) {
 // Callback when MQTT is connected
 void mqttConnected(void* response) {
   Serial.println("MQTT connected!");
-  mqtt.subscribe("home/commandtopic");
+  mqtt.subscribe("pid/reference");
   connected = true;
 }
 
@@ -136,8 +127,33 @@ void mqttDisconnected(void* response) {
 void mqttData(void* response) {
   ELClientResponse *res = (ELClientResponse *)response;
   String topic = res->popString();
-
   String serial_str = res->popString();
+
+  if(serial_str == "getkoef") {
+    String result = "{kp:" + String(pid.kp.get()) + 
+                    ", ki:" + String(pid.ki.get()) + 
+                    ", kd:" + String(pid.kd.get()) + "}";
+    char buf1[50];
+    result.toCharArray(buf1, result.length() + 1);
+    mqtt.publish("home/feedbacktopic", buf1);
+  }
+
+  char buf[serial_str.length() + 1]; 
+  serial_str.toCharArray(buf, serial_str.length() + 1);
+  char *array[serial_str.length() + 2];
+  int i = 0;
+  array[i] = strtok(buf,",");
+    while(array[i]!=NULL) {
+      array[++i] = strtok(NULL,",");
+    }
+  int reference = atoi(array[0]);
+  int kp = atoi(array[1]);
+  int ki = atoi(array[2]);
+  int kd = atoi(array[3]);
+  if(pos_encoder != reference) pos_encoder = reference;
+  if(pid.kp.get() != kp) pid.kp.set(kp);
+  if(pid.ki.get() != ki) pid.ki.set(ki);
+  if(pid.kd.get() != kp) pid.kd.set(kd);
 
   Serial.println(serial_str);
 }
